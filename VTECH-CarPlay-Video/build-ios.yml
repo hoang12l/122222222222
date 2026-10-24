@@ -1,0 +1,23 @@
+name: Build iOS simulator demo
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build unsigned simulator app
+        run: |
+          xcodebuild -project VTECHCarPlayVideo.xcodeproj -scheme VTECHCarPlayVideo -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Package simulator app
+        run: cd build/Build/Products/Release-iphonesimulator && zip -r "$GITHUB_WORKSPACE/VTECHCarPlayVideo-Simulator.zip" VTECHCarPlayVideo.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VTECHCarPlayVideo-Simulator
+          path: VTECHCarPlayVideo-Simulator.zip
