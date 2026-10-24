@@ -1,86 +1,152 @@
 import SwiftUI
+import AVKit
+import UniformTypeIdentifiers
 
 @main
 struct VTECHApp: App {
-    var body: some Scene { WindowGroup { DashboardView() } }
+    var body: some Scene { WindowGroup { DashboardView().preferredColorScheme(.dark) } }
 }
 
 struct DashboardView: View {
-    @State private var showGuide = false
-    @State private var showInfo = false
-    private let bg = Color(red: 0.055, green: 0.075, blue: 0.12)
+    @AppStorage("vehicleName") private var vehicleName = "Tucson 2024"
+    @State private var importing = false
+    @State private var parked = false
+    @State private var sheet: Sheet?
+    @State private var video: SelectedVideo?
+    @State private var errorMessage: String?
+    @State private var loading = false
     private let panel = Color(red: 0.105, green: 0.13, blue: 0.19)
+    enum Sheet: String, Identifiable { case guide, settings; var id: String { rawValue } }
+    struct SelectedVideo: Identifiable { let id = UUID(); let url: URL }
+
     var body: some View {
-        ZStack {
-            bg.ignoresSafeArea()
+        NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    HStack {
-                        Image(systemName: "car.side.fill").font(.title2).foregroundStyle(.cyan)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("VTECH").font(.system(size: 23, weight: .black, design: .rounded))
-                            Text("CARPLAY VIDEO · DEMO").font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(.gray)
-                        }
-                        Spacer()
-                        Image(systemName: "gearshape.fill").foregroundStyle(.gray)
-                    }
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Giải trí khi đỗ xe").font(.system(size: 30, weight: .bold, design: .rounded))
-                        Text("Giao diện thử nghiệm dành cho iPhone và Tucson 2024.")
-                            .font(.subheadline).foregroundStyle(.gray)
-                    }
+                VStack(alignment: .leading, spacing: 22) {
+                    Text("Giải trí khi đỗ xe").font(.largeTitle.bold())
+                    Text("Video cá nhân trên iPhone · \(vehicleName)").foregroundStyle(.secondary)
+                    Toggle("Tôi đã đỗ xe an toàn", isOn: $parked).tint(.cyan).accessibilityIdentifier("parkedToggle")
+                        .padding().background(panel, in: RoundedRectangle(cornerRadius: 16))
                     VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            Image(systemName: "play.rectangle.fill").font(.system(size: 48)).foregroundStyle(.red)
-                            Spacer()
-                            Text("VIDEO").font(.caption2).bold().padding(8).background(.white.opacity(0.1)).clipShape(Capsule())
-                        }
-                        Text("YouTube").font(.title2).bold()
-                        Text("Mở YouTube trên iPhone. Chỉ phát lên xe nếu hệ thống hỗ trợ video CarPlay/AirPlay.")
-                            .font(.subheadline).foregroundStyle(.gray)
-                        Button { if let url = URL(string: "https://www.youtube.com") { UIApplication.shared.open(url) } } label: {
-                            Label("Mở YouTube trên iPhone", systemImage: "arrow.up.right")
-                                .font(.headline).frame(maxWidth: .infinity).padding(15)
-                        }
-                        .buttonStyle(.plain).background(Color.red).clipShape(RoundedRectangle(cornerRadius: 13))
-                    }.padding(20).background(panel).clipShape(RoundedRectangle(cornerRadius: 22))
+                        Label("Thư viện video", systemImage: "film.stack.fill").font(.title2.bold()).foregroundStyle(.cyan)
+                        Text("Chọn video từ ứng dụng Tệp để phát trên iPhone. Tệp được mở cho phiên xem này, không sao chép vào ứng dụng.").foregroundStyle(.secondary)
+                        Button { importing = true } label: {
+                            Label(loading ? "Đang kiểm tra video…" : "Chọn video", systemImage: "folder.badge.plus")
+                                .frame(maxWidth: .infinity).padding(8)
+                        }.buttonStyle(.borderedProminent).tint(.cyan).disabled(!parked || loading).accessibilityIdentifier("chooseVideo")
+                        if !parked { Text("Xác nhận đã đỗ xe để mở trình phát.").font(.caption).foregroundStyle(.secondary) }
+                    }.padding(20).background(panel, in: RoundedRectangle(cornerRadius: 22))
                     VStack(alignment: .leading, spacing: 14) {
-                        Label("TRẠNG THÁI", systemImage: "checkmark.shield").font(.caption).bold().foregroundStyle(.gray)
-                        status("Ứng dụng iPhone", "Bản mẫu giao diện", "checkmark.circle.fill", .green)
-                        status("Video trên Tucson", "Chưa xác minh tương thích", "questionmark.circle.fill", .orange)
-                        status("Quyền CarPlay Video", "Chưa được cấp", "lock.fill", .orange)
-                    }.padding(20).background(panel).clipShape(RoundedRectangle(cornerRadius: 22))
-                    Button { showGuide = true } label: {
-                        Label("Hướng dẫn kiểm tra trên xe", systemImage: "list.bullet.rectangle")
-                            .frame(maxWidth: .infinity).padding(15)
-                    }.buttonStyle(.plain).background(.white.opacity(0.10)).clipShape(RoundedRectangle(cornerRadius: 13))
-                    Button { showInfo = true } label: { Text("Giới hạn kỹ thuật & pháp lý").font(.footnote).foregroundStyle(.cyan) }
-                        .frame(maxWidth: .infinity)
-                    Text("VTECH · Prototype 0.1 · Không phát video khi lái xe")
-                        .font(.caption2).foregroundStyle(.gray).frame(maxWidth: .infinity)
+                        Label("YouTube", systemImage: "play.rectangle.fill").font(.title2.bold()).foregroundStyle(.red)
+                        Text("Mở trang YouTube bên ngoài ứng dụng. Không tự đưa YouTube lên màn hình xe.").foregroundStyle(.secondary)
+                        Link(destination: URL(string: "https://www.youtube.com")!) {
+                            Label("Mở YouTube", systemImage: "arrow.up.right.square").frame(maxWidth: .infinity).padding(8)
+                        }.buttonStyle(.bordered).tint(.red).disabled(!parked).accessibilityIdentifier("youtubeLink")
+                    }.padding(20).background(panel, in: RoundedRectangle(cornerRadius: 22))
+                    VStack(alignment: .leading, spacing: 14) {
+                        Label("Trạng thái", systemImage: "info.circle").font(.headline)
+                        status("Ứng dụng iPhone", "Phát video từ Tệp", "iphone", .green)
+                        status("Màn hình xe", "Chưa xác minh tương thích", "car.side", .orange)
+                        status("Tích hợp CarPlay", "Chưa được triển khai trong bản này", "lock", .orange)
+                    }.padding(20).background(panel, in: RoundedRectangle(cornerRadius: 22))
+                    Button { sheet = .guide } label: {
+                        Label("Hướng dẫn sử dụng", systemImage: "list.bullet.rectangle").frame(maxWidth: .infinity)
+                    }.buttonStyle(.bordered)
+                    Text("VTECH · 0.2 · Chỉ xem video khi đã đỗ xe").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 }.padding(22)
+            }.background(Color(red: 0.055, green: 0.075, blue: 0.12))
+            .navigationTitle("VTECH").navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button { sheet = .settings } label: { Image(systemName: "gearshape") }.accessibilityLabel("Cài đặt").accessibilityIdentifier("settingsButton") }
+            .sheet(item: $sheet) { item in
+                NavigationStack {
+                    Form {
+                        if item == .settings {
+                            Section("Phương tiện") { TextField("Tên xe", text: $vehicleName).accessibilityIdentifier("vehicleName") }
+                            Section("Thông tin") {
+                                Text("VTECH CarPlay Video 0.2")
+                                Text("Ứng dụng không kiểm tra được vị trí cần số, trạng thái chuyển động hoặc khả năng video của xe.")
+                            }
+                        } else {
+                            Section("Trên iPhone") {
+                                Text("1. Đỗ xe an toàn và xác nhận trên màn hình chính.")
+                                Text("2. Chọn video → chọn một tệp trong Tệp hoặc iCloud Drive.")
+                                Text("3. Dùng điều khiển phát, tua và âm lượng của trình phát hệ thống.")
+                                Text("4. Đóng trình phát để dừng video và kết thúc quyền truy cập tệp.")
+                            }
+                            Section("Màn hình xe") {
+                                Text("Bản này phát trên iPhone. Chưa có ứng dụng hoặc entitlement CarPlay; không xác nhận hỗ trợ video trên Tucson. Kiểm tra tài liệu chính thức của xe trước khi dùng chức năng trình chiếu của hệ thống.")
+                            }
+                            Section("Lỗi phát video") { Text("Tải tệp iCloud về máy, thử video MP4/MOV tương thích iPhone. Đổi tệp nếu video hỏng hoặc codec không được hỗ trợ.") }
+                        }
+                    }.navigationTitle(item == .settings ? "Cài đặt" : "Hướng dẫn")
+                        .toolbar { Button("Đóng") { sheet = nil }.accessibilityIdentifier("closeSheet") }
+                }
             }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.movie]) { result in
+                switch result {
+                case .success(let url):
+                    loading = true
+                    Task { @MainActor in
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { loading = false }
+                        do {
+                            let playable = try await AVURLAsset(url: url).load(.isPlayable)
+                            guard playable else { throw VideoError.unsupported }
+                            guard parked else {
+                                if scoped { url.stopAccessingSecurityScopedResource() }
+                                return
+                            }
+                            // The player owns access until its sheet disappears.
+                            activeScopedURL = scoped ? url : nil
+                            video = SelectedVideo(url: url)
+                        } catch {
+                            if scoped { url.stopAccessingSecurityScopedResource() }
+                            errorMessage = "Không mở được video. Kiểm tra tệp đã tải về và định dạng tương thích iPhone.\n\(error.localizedDescription)"
+                        }
+                    }
+                case .failure(let error): errorMessage = error.localizedDescription
+                }
+            }
+            .fullScreenCover(item: $video, onDismiss: releaseVideo) { item in PlayerScreen(url: item.url) }
+            .alert("Không thể mở video", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("Đóng", role: .cancel) { errorMessage = nil }
+            } message: { Text(errorMessage ?? "") }
         }
-        .foregroundStyle(.white)
-        .alert("Kiểm tra trên Tucson", isPresented: $showGuide) {
-            Button("Đã hiểu", role: .cancel) { }
-        } message: {
-            Text("1. Đỗ xe và chuyển về P. 2. Kết nối iPhone với CarPlay. 3. Mở video bằng ứng dụng có AirPlay. 4. Kiểm tra xem màn hình xe có xuất hiện trong danh sách phát video không. Không có nghĩa là YouTube được thêm vào CarPlay.")
-        }
-        .alert("Giới hạn của bản mẫu", isPresented: $showInfo) {
-            Button("Đóng", role: .cancel) { }
-        } message: {
-            Text("Bản mẫu không sử dụng entitlement CarPlay Video, không jailbreak, không thay đổi firmware và không thể đưa YouTube vào CarPlay nếu xe không hỗ trợ.")
-        }
+    }
+    @State private var activeScopedURL: URL?
+    private func releaseVideo() {
+        activeScopedURL?.stopAccessingSecurityScopedResource()
+        activeScopedURL = nil
     }
     private func status(_ title: String, _ detail: String, _ symbol: String, _ color: Color) -> some View {
         HStack(spacing: 12) {
             Image(systemName: symbol).foregroundStyle(color).frame(width: 24)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.subheadline).bold()
-                Text(detail).font(.caption).foregroundStyle(.gray)
-            }
-            Spacer()
+            VStack(alignment: .leading) { Text(title).bold(); Text(detail).font(.caption).foregroundStyle(.secondary) }
         }
     }
 }
+enum VideoError: LocalizedError {
+    case unsupported
+    var errorDescription: String? { "Video không được hỗ trợ hoặc tệp bị hỏng." }
+}
+struct PlayerScreen: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var player: AVPlayer
+    @State private var failed = false
+    init(url: URL) { _player = State(initialValue: AVPlayer(url: url)) }
+    var body: some View {
+        NavigationStack {
+            VideoPlayer(player: player)
+                .navigationTitle("Video cá nhân").navigationBarTitleDisplayMode(.inline)
+                .toolbar { Button("Đóng") { player.pause(); dismiss() } }
+                .onDisappear { player.pause(); player.replaceCurrentItem(with: nil) }
+                .onChange(of: scenePhase) { _, phase in if phase != .active { player.pause() } }
+                .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime, object: player.currentItem)) { _ in failed = true }
+                .alert("Không phát được video", isPresented: $failed) {
+                    Button("Đóng") { dismiss() }
+                } message: { Text("Hãy thử tệp MP4/MOV khác tương thích iPhone.") }
+        }
+    }
+}
+
