@@ -1,0 +1,66 @@
+name: Test and build iPhone IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: VTECH-CarPlay-Video
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Show toolchain
+        run: xcodebuild -version
+      - name: Generate project
+        run: xcodegen generate
+      - name: Select available iPhone Simulator
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))['devices']
+          iphones = [d for runtime, group in devices.items() if 'iOS' in runtime for d in group if 'iPhone' in d['name'] and d.get('isAvailable')]
+          if not iphones:
+              raise SystemExit('No available iPhone Simulator')
+          selected = next((d for d in iphones if d['name'] == 'iPhone 16 Pro Max'), iphones[0])
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('SIMULATOR_ID=' + selected['udid'] + '\n')
+          print('Testing on:', selected['name'])
+          PY
+      - name: Run UI tests on Simulator
+        run: |
+          set -o pipefail
+          xcodebuild test -project VTECHCarPlayVideo.xcodeproj -scheme VTECHCarPlayVideo -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -parallel-testing-enabled NO -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO | tee test.log
+      - name: Build for physical iPhone
+        run: |
+          set -o pipefail
+          xcodebuild -project VTECHCarPlayVideo.xcodeproj -scheme VTECHCarPlayVideo -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath DeviceBuild CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build | tee device-build.log
+      - name: Package unsigned IPA for local signing
+        run: |
+          mkdir -p Package/Payload
+          cp -R DeviceBuild/Build/Products/Release-iphoneos/VTECHCarPlayVideo.app Package/Payload/
+          test -f Package/Payload/VTECHCarPlayVideo.app/Info.plist
+          cd Package
+          /usr/bin/zip -r ../VTECHCarPlayVideo-iPhone-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VTECH-iPhone-unsigned-IPA
+          path: VTECH-CarPlay-Video/VTECHCarPlayVideo-iPhone-unsigned.ipa
+          if-no-files-found: error
+      - name: Upload test results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VTECH-test-results
+          path: |
+            VTECH-CarPlay-Video/TestResults.xcresult
+            VTECH-CarPlay-Video/test.log
+            VTECH-CarPlay-Video/device-build.log
+          if-no-files-found: warn
